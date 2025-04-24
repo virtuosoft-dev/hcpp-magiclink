@@ -19,7 +19,7 @@
         public function hcpp_edit_web_xpath( $xpath ) {
             global $hcpp;
 
-            // Add "Enable Magic Link" checkbox and "Magic Link URL" textbox
+            // Add "Enable private Magic Link" checkbox and "Magic Link URL" textbox
             $checkboxNode = $xpath->query('//div[@class="form-check u-mb10"][input[@id="v-redirect-checkbox"]]')->item(0);
             if ($checkboxNode) {
                 $doc = $xpath->document; // Get the DOMDocument associated with the DOMXPath
@@ -41,8 +41,18 @@
                 $checkboxInput->setAttribute('id', 'v-magiclink-checkbox');
 
                 // Create the checkbox label
-                $checkboxLabel = $doc->createElement('label', 'Enable Magic Link');
+                $checkboxLabel = $doc->createElement('label', 'Require secret Magic Link to visit site');
                 $checkboxLabel->setAttribute('for', 'v-magiclink-checkbox');
+
+                // Add help icon link
+                $helpIcon = $doc->createElement('a');
+                $helpIcon->setAttribute('href', 'https://devstia.com/about-magiclink');
+                $helpIcon->setAttribute('target', '_blank');
+                $helpIcon->setAttribute('class', 'u-ml5');
+                $helpIcon->appendChild($doc->createElement('i'))->setAttribute('class', 'fas fa-question-circle');
+
+                // Append help icon to the label
+                $checkboxLabel->appendChild($helpIcon);
 
                 // Append checkbox input and label to the checkbox div
                 $checkboxDiv->appendChild($checkboxInput);
@@ -82,9 +92,9 @@
                 }
                 $link = $hcpp->run( "v-invoke-plugin magiclink_get $user $domain" );
                 if ($link == '') {
-                    $link = 'https://' . $domain . '/' . $hcpp->random_chars( 12 );
+                    $link = 'http://' . $domain . '/' . $hcpp->random_chars( 12 );
                 }else{
-                    $link = 'https://' . $domain . '/' . $link;
+                    $link = 'http://' . $domain . '/' . $link;
                     $parentDiv->setAttribute('x-data', '{ magicLinkEnabled: true }');
                 }
                 $input->setAttribute( 'value', $link );
@@ -97,11 +107,7 @@
                 $containerDiv->appendChild($innerDiv);
 
                 // Create the small text
-                $smallText = $doc->createElement('small', 'Note: click to copy to clipboard after saving form. ');
-                $learnMoreLink = $doc->createElement('a', 'Learn more');
-                $learnMoreLink->setAttribute('href', 'https://devstia.com/about-magiclink');
-                $learnMoreLink->setAttribute('target', '_blank');
-                $smallText->appendChild($learnMoreLink);
+                $smallText = $doc->createElement('small', 'Note: click to copy to clipboard after saving form.');
 
                 // Append the small text to the container div
                 $containerDiv->appendChild($smallText);
@@ -113,20 +119,59 @@
                 // Insert the parent div into the DOM as the previous sibling
                 $checkboxNode->parentNode->insertBefore($parentDiv, $checkboxNode);
 
-                // Add JavaScript for clipboard functionality
-                $script = $doc->createElement('script', '
-                    function copyToClipboard(element) {
-                        navigator.clipboard.writeText(element.value).then(function() {
-                            alert("Copied to clipboard: " + element.value);
-                        }).catch(function(error) {
-                            console.error("Clipboard copy failed:", error);
+                // Locate the closing body tag and insert the script before it
+                $bodyNode = $xpath->query('//body')->item(0);
+                if ($bodyNode) {
+                    $script = $doc->createElement('script', '
+                        function copyToClipboard(element) {
+                            navigator.clipboard.writeText(element.value).then(function() {
+                                alert("Copied to clipboard: " + element.value);
+                            }).catch(function(error) {
+                                console.error("Clipboard copy failed:", error);
+                            });
+                        }
+
+                        document.addEventListener("DOMContentLoaded", function() {
+                            const sslCheckbox = document.getElementById("v_ssl");
+                            const magicLinkInput = document.getElementById("v-magiclink-url");
+                            const updateMagicLinkProtocol = () => {
+                                if (sslCheckbox.checked) {
+                                    magicLinkInput.value = magicLinkInput.value.replace(/^http:/, "https:");
+                                } else {
+                                    magicLinkInput.value = magicLinkInput.value.replace(/^https:/, "http:");
+                                }
+                            };
+                            sslCheckbox.addEventListener("change", updateMagicLinkProtocol);
+                            updateMagicLinkProtocol(); // Initial check on page load
                         });
-                    }
-                ');
-                $doc->appendChild($script);
+                    ');
+                    $bodyNode->appendChild($script);
+                }
             }
 
             return $xpath;
+        }
+
+        /** 
+         * Modify open website link to use magiclink 
+         */
+        public function hcpp_list_web_html( $html ) {
+            global $hcpp;
+
+            // Get the active user
+            $user = $_SESSION["user"];
+            if ($_SESSION["look"] != "") {
+                $user = $_SESSION["look"];
+            }
+            $links = $hcpp->run( "v-invoke-plugin magiclink_get $user json" );
+
+            // Cycle through the links object
+            foreach ( $links as $domain => $link ) {
+                $orig = '://' . $domain . '/" target="_blank"';
+                $magic = '://' . $domain . '/' . $link . '" target="_blank"';
+                $html = str_replace($orig, $magic, $html);
+            }
+            return $html;
         }
 
         /**
@@ -202,6 +247,9 @@
                 if ( isset( $args[1] ) ) {
                     $username = preg_replace( "/[^a-zA-Z0-9-_]+/", "", $args[1] ); // Sanitized username
                 }
+                if ( ! isset( $username ) ) {
+                    return $args;
+                }
                 if ( isset( $args[2] ) ) {
                     $domain = preg_replace( "/[^a-zA-Z0-9-_.]+/", "", $args[2] ); // Allow periods in domain
                 }
@@ -209,11 +257,30 @@
                 if ( !file_exists( $this->magiclink_folder ) ) {
                     mkdir( $this->magiclink_folder, 0700, true );
                 }
-                $magiclink_file = "{$this->magiclink_folder}/{$username}_{$domain}";
-                if ( file_exists( $magiclink_file ) ) {
-                    echo file_get_contents( $magiclink_file );
-                } else {
-                    echo "";
+
+                if ( isset( $domain ) && $domain != 'json' ) {
+
+                    // Return specific domain magiclink
+                    $magiclink_file = "{$this->magiclink_folder}/{$username}_{$domain}";
+                    if ( file_exists( $magiclink_file ) ) {
+                        echo file_get_contents( $magiclink_file );
+                    } else {
+                        echo "";
+                    }
+                }else{
+
+                    // Return all magiclinks for the given user as json array
+                    $magiclink_files = glob( "{$this->magiclink_folder}/{$username}_*" );
+                    $magiclinks = [];
+                    foreach ( $magiclink_files as $file ) {
+                        $filename = basename( $file );
+                        $domain = preg_replace( "/^{$username}_/", "", $filename );
+                        $domain = preg_replace( "/[^a-zA-Z0-9-_.]+/", "", $domain ); // Allow periods in domain
+                        if ( file_exists( $file ) ) {
+                            $magiclinks[$domain] = file_get_contents( $file );
+                        }
+                    }
+                    echo json_encode($magiclinks, JSON_PRETTY_PRINT);
                 }
             }
             return $args;
