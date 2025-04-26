@@ -19,7 +19,7 @@ Magic Link will lock down an entire website domain and prevent any visitors from
 The Magic Link plugin will also change the open website icon to use the Magic Link URL on the `Web` listing screen for any sites that have Magic Link turned on. 
 
 > [!NOTE]
-> You must save the form to take effect. Magic Link will regenerate a unique URL (invalidating any prior URL) when you turn off and on the `Require secret Magic Link...` option between saves. 
+> You must save the form to take effect. Magic Link will regenerate a unique URL (invalidating any prior URL) when you turn off and on the `Require secret Magic Link...` checkbox between saves. 
 
 > [!TIP]
 > Magic Link supports redirects. You can append a `redirect` GET paramter to the Magic Link URL if you want to redirect to a specific subfolder or page on your website. For example, appending the string `?redirect=/about-us` to the Magic Link URL example from the screenshot:
